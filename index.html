@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Sensor Data Dashboard</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for plotting and date adapter -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <!-- Leaflet.js for interactive maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Ensure the map fills the screen */
+        #map {
+            height: 100vh;
+            width: 100vw;
+        }
+        /* Hide the dashboard and modal initially */
+        #dashboard-view, #add-sensor-modal {
+            display: none;
+        }
+        /* Custom styles for the logo on the map */
+        .leaflet-control-logo {
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 6px 10px;
+            border-radius: 5px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+            text-align: center;
+        }
+        .leaflet-control-logo .logo-text-main {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+            display: block;
+            line-height: 1;
+            letter-spacing: 1px;
+        }
+        .leaflet-control-logo .logo-text-sub {
+            font-size: 8px;
+            font-weight: normal;
+            color: #555;
+            display: block;
+            line-height: 1;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <!-- Initial View with Interactive Map -->
+    <div id="map-view">
+        <div id="map"></div>
+    </div>
+
+    <!-- Add Sensor Modal -->
+    <div id="add-sensor-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[1000]">
+        <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg">
+            <h2 class="text-2xl font-bold mb-6">Add a New Sensor</h2>
+            <form id="add-sensor-form">
+                <div class="space-y-4">
+                    <input type="text" id="sensor-name" placeholder="Sensor Name (e.g., Main Farm)" class="w-full px-4 py-2 border rounded-lg" required>
+                    <select id="sensor-type" class="w-full px-4 py-2 border rounded-lg">
+                        <option value="default">Voltage/Current Sensor</option>
+                        <option value="nitrate">Nitrate Time-Series Sensor</option>
+                        <option value="oxygen">Oxygen Time-Series Sensor</option>
+                    </select>
+                    <div class="grid grid-cols-2 gap-4">
+                        <input type="text" id="sensor-lat" placeholder="Latitude (e.g., 38.123)" class="w-full px-4 py-2 border rounded-lg" required>
+                        <input type="text" id="sensor-lng" placeholder="Longitude (e.g., -121.456)" class="w-full px-4 py-2 border rounded-lg" required>
+                    </div>
+                    <!-- Fields for Voltage/Current Sensor -->
+                    <div id="default-urls">
+                        <input type="url" id="sensor-ts-url" placeholder="Timestamp/Temp CSV URL" class="w-full px-4 py-2 border rounded-lg">
+                        <input type="url" id="sensor-vc-url" placeholder="Voltage/Current CSV URL" class="w-full px-4 py-2 border rounded-lg mt-4">
+                        <input type="url" id="sensor-params-url" placeholder="Parameters CSV URL" class="w-full px-4 py-2 border rounded-lg mt-4">
+                    </div>
+                    <!-- Fields for Nitrate Sensor -->
+                    <div id="nitrate-fields" class="hidden">
+                        <input type="url" id="sensor-nitrate-url" placeholder="Nitrate Data CSV URL" class="w-full px-4 py-2 border rounded-lg">
+                        <p class="text-sm text-gray-600 mt-4 mb-2">Enter calibration parameters (Conc. = 10^((Raw - Offset) / Slope)):</p>
+                        <div class="grid grid-cols-3 gap-2">
+                            <div>
+                                <label class="font-bold text-center block">Channel 1 (L)</label>
+                                <input type="number" step="any" id="nitrate-slope1" placeholder="Slope" class="w-full mt-1 px-2 py-1 border rounded-lg">
+                                <input type="number" step="any" id="nitrate-offset1" placeholder="Offset" class="w-full mt-1 px-2 py-1 border rounded-lg">
+                            </div>
+                            <div>
+                                <label class="font-bold text-center block">Channel 2 (M)</label>
+                                <input type="number" step="any" id="nitrate-slope2" placeholder="Slope" class="w-full mt-1 px-2 py-1 border rounded-lg">
+                                <input type="number" step="any" id="nitrate-offset2" placeholder="Offset" class="w-full mt-1 px-2 py-1 border rounded-lg">
+                            </div>
+                             <div>
+                                <label class="font-bold text-center block">Channel 3 (N)</label>
+                                <input type="number" step="any" id="nitrate-slope3" placeholder="Slope" class="w-full mt-1 px-2 py-1 border rounded-lg">
+                                <input type="number" step="any" id="nitrate-offset3" placeholder="Offset" class="w-full mt-1 px-2 py-1 border rounded-lg">
+                            </div>
+                        </div>
+                    </div>
+                     <!-- Fields for Oxygen Sensor -->
+                    <div id="oxygen-fields" class="hidden">
+                        <input type="url" id="sensor-oxygen-url" placeholder="Oxygen Data CSV URL" class="w-full px-4 py-2 border rounded-lg">
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-4 mt-6">
+                    <button type="button" id="cancel-add-sensor" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg">Cancel</button>
+                    <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">Add Sensor</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Dashboard View (Initially Hidden) -->
+    <div id="dashboard-view">
+        <div class="container mx-auto p-4 md:p-8">
+            <header class="relative text-center mb-8">
+                <button id="back-to-map-button" class="absolute top-0 left-0 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg inline-flex items-center transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                    <span>Back to Map</span>
+                </button>
+                <h1 id="dashboard-title" class="text-4xl font-bold text-gray-900">Sensor Data Dashboard</h1>
+                <p class="text-lg text-gray-600 mt-2">Live data fetched from Google Sheets</p>
+            </header>
+
+            <main class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="lg:col-span-2 bg-white p-6 rounded-lg shadow-lg">
+                    <h2 id="chart-title" class="text-2xl font-semibold mb-4"></h2>
+                    <div class="relative h-96">
+                        <canvas id="mainChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4">Latest Reading</h2>
+                    <div id="latest-data-container" class="space-y-4 text-gray-700">
+                        <p>Loading data...</p>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const sensorDataSources = {
+            sensor1: {
+                type: 'default',
+                name: "Bouldin Island Sensor 1",
+                coords: [38.155, -121.585],
+                urls: {
+                    timestampTemp: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxvVH61d0EUlLT5AbLNc7okNceMWdnEHIFOxlD2UfDHW1ikOpS2p3sMhubBHTlRfsbY1uD68Aun88M/pub?gid=0&single=true&output=csv',
+                    voltageCurrent: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxvVH61d0EUlLT5AbLNc7okNceMWdnEHIFOxlD2UfDHW1ikOpS2p3sMhubBHTlRfsbY1uD68Aun88M/pub?gid=2090596356&single=true&output=csv',
+                    parameters: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRxvVH61d0EUlLT5AbLNc7okNceMWdnEHIFOxlD2UfDHW1ikOpS2p3sMhubBHTlRfsbY1uD68Aun88M/pub?gid=2010102911&single=true&output=csv'
+                }
+            },
+            sensor2: {
+                type: 'nitrate',
+                name: "Bouldin Island Nitrate Sensor 2",
+                coords: [38.150, -121.590],
+                urls: {
+                    nitrateData: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSYCsFATUZFtNC8cDdsK7IfMVjmVBqflO_H_IhEtkGiMCLdjntXN_1fPiMLMFTqE2_BPkH51OPFbopy/pub?gid=0&single=true&output=csv'
+                },
+                calibration: {
+                    ch1: { slope: -0.0521295, offset: 1.523635581 },
+                    ch2: { slope: -0.056245714, offset: 1.522888933 },
+                    ch3: { slope: -0.054348, offset: 1.524521766 }
+                }
+            },
+            sensor3: {
+                type: 'nitrate',
+                name: "Bouldin Island Nitrate Sensor",
+                coords: [38.160, -121.580],
+                urls: {
+                    nitrateData: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTabXryNqcK3MyM1561gXJLU0yrvModWhIQzq0iWTije70m0GDyYDuBi88aLNtXkcV6zjqxU5TVcnCW/pub?gid=0&single=true&output=csv'
+                },
+                calibration: {
+                    ch1: { slope: 0.05608625, offset: 1.230202143 },
+                    ch2: { slope: 0.05515625, offset: 1.235149709 },
+                    ch3: { slope: 0.05590875, offset: 1.231228081 }
+                }
+            },
+            sensor4: {
+                type: 'oxygen',
+                name: "Bouldin Island Oxygen Sensor",
+                coords: [38.158, -121.588],
+                urls: {
+                    // This sensor reads from the same sheet as the nitrate sensor
+                    oxygenData: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTabXryNqcK3MyM1561gXJLU0yrvModWhIQzq0iWTije70m0GDyYDuBi88aLNtXkcV6zjqxU5TVcnCW/pub?gid=0&single=true&output=csv'
+                }
+            }
+        };
+
+        // --- DOM ELEMENTS ---
+        const mapView = document.getElementById('map-view');
+        const dashboardView = document.getElementById('dashboard-view');
+        const backToMapButton = document.getElementById('back-to-map-button');
+        const dashboardTitle = document.getElementById('dashboard-title');
+        const chartTitle = document.getElementById('chart-title');
+        const addSensorModal = document.getElementById('add-sensor-modal');
+        const addSensorForm = document.getElementById('add-sensor-form');
+        const cancelAddSensorButton = document.getElementById('cancel-add-sensor');
+        const sensorTypeSelect = document.getElementById('sensor-type');
+        const defaultUrlsDiv = document.getElementById('default-urls');
+        const nitrateFieldsDiv = document.getElementById('nitrate-fields');
+        const oxygenFieldsDiv = document.getElementById('oxygen-fields');
+
+
+        // --- MAP INITIALIZATION ---
+        const map = L.map('map').setView([38.155, -121.585], 14);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' }).addTo(map);
+
+        // --- ADD SENSOR BUTTON CONTROL ---
+        const addSensorButton = L.control({position: 'topright'});
+        addSensorButton.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
+            div.innerHTML = `<button class="bg-white p-2 rounded shadow" title="Add New Sensor"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg></button>`;
+            div.onclick = (e) => { e.stopPropagation(); addSensorModal.style.display = 'flex'; };
+            return div;
+        };
+        addSensorButton.addTo(map);
+
+        // --- ADD LOGO CONTROL ---
+        const logoControl = L.control({position: 'bottomleft'});
+        logoControl.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'leaflet-control-logo');
+            div.innerHTML = `<div class="logo-text-main">TIERRA</div><div class="logo-text-sub">METRICS</div>`;
+            return div;
+        };
+        logoControl.addTo(map);
+
+        // --- CHART SETUP ---
+        const ctx = document.getElementById('mainChart').getContext('2d');
+        let mainChart = new Chart(ctx, {}); // Initialize an empty chart
+
+        // --- FUNCTIONS ---
+        async function fetchCSV(url) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`Network response was not ok: ${response.statusText}`);
+                const csvText = await response.text();
+                return csvText.split('\n').filter(row => row).map(row => row.split(','));
+            } catch (error) {
+                console.error('Failed to fetch CSV:', error);
+                return null;
+            }
+        }
+
+        async function loadAllData(sensorId) {
+            const source = sensorDataSources[sensorId];
+            dashboardTitle.textContent = source.name;
+
+            if (source.type === 'nitrate') {
+                if (source.urls.nitrateData.includes('YOUR_')) {
+                    document.getElementById('latest-data-container').innerHTML = `<p class="text-red-500 font-bold">Error: Please replace the placeholder URL for ${source.name}.</p>`;
+                    return;
+                }
+                const nitrateData = await fetchCSV(source.urls.nitrateData);
+                if (nitrateData) {
+                    updateLatestDataNitrate(nitrateData, source.calibration);
+                    updateChartNitrate(nitrateData, source.calibration);
+                } else {
+                     document.getElementById('latest-data-container').innerHTML = `<p class="text-red-500 font-bold">Error: Could not load data for ${source.name}.</p>`;
+                }
+            } else if (source.type === 'oxygen') {
+                if (source.urls.oxygenData.includes('YOUR_')) {
+                    document.getElementById('latest-data-container').innerHTML = `<p class="text-red-500 font-bold">Error: Please replace the placeholder URL for ${source.name}.</p>`;
+                    return;
+                }
+                const oxygenData = await fetchCSV(source.urls.oxygenData);
+                if (oxygenData) {
+                    updateLatestDataOxygen(oxygenData);
+                    updateChartOxygen(oxygenData);
+                } else {
+                     document.getElementById('latest-data-container').innerHTML = `<p class="text-red-500 font-bold">Error: Could not load data for ${source.name}.</p>`;
+                }
+            }
+            else { // Default Voltage/Current Sensor
+                const { timestampTemp, voltageCurrent, parameters } = source.urls;
+                if (timestampTemp.includes('YOUR_') || voltageCurrent.includes('YOUR_') || parameters.includes('YOUR_')) {
+                    document.getElementById('latest-data-container').innerHTML = `<p class="text-red-500 font-bold">Error: Please replace placeholder URLs for ${source.name}.</p>`;
+                    return;
+                }
+                const [timestampData, voltageCurrentData, paramsData] = await Promise.all([
+                    fetchCSV(timestampTemp), fetchCSV(voltageCurrent), fetchCSV(parameters)
+                ]);
+                if (timestampData && voltageCurrentData && paramsData) {
+                    updateLatestDataDefault(timestampData, paramsData);
+                    updateChartDefault(voltageCurrentData);
+                } else {
+                    document.getElementById('latest-data-container').innerHTML = `<p class="text-red-500 font-bold">Error: Could not load data for ${source.name}.</p>`;
+                }
+            }
+        }
+        
+        function updateLatestDataDefault(tsData, pData) {
+            const latestTemp = tsData[1][tsData[1].length - 1];
+            const latestParams = pData[0][pData[0].length - 1];
+            const container = document.getElementById('latest-data-container');
+            container.innerHTML = `
+                <div><strong class="font-semibold">Temperature:</strong><p>${latestTemp} °C</p></div>
+                <div><strong class="font-semibold">Parameters:</strong><p class="break-words">${latestParams}</p></div>`;
+        }
+
+        function updateLatestDataNitrate(nitrateData, calibration) {
+            const dataRows = nitrateData.slice(1);
+            if (dataRows.length === 0) return;
+            const lastRow = dataRows[dataRows.length - 1];
+            const timestamp = lastRow[20]; // Column U
+            const battery = lastRow[1];
+            const container = document.getElementById('latest-data-container');
+            const index1 = 11, index2 = 12, index3 = 13; // Columns L, M, N
+            if (lastRow.length <= index3) {
+                 container.innerHTML = `<p class="text-red-500">Error: Not enough columns for nitrate readings.</p>`;
+                 return;
+            }
+            const raw1 = parseFloat(lastRow[index1]);
+            const raw2 = parseFloat(lastRow[index2]);
+            const raw3 = parseFloat(lastRow[index3]);
+            const conc1 = (Math.pow(10, (raw1 - calibration.ch1.offset) / calibration.ch1.slope)).toFixed(2);
+            const conc2 = (Math.pow(10, (raw2 - calibration.ch2.offset) / calibration.ch2.slope)).toFixed(2);
+            const conc3 = (Math.pow(10, (raw3 - calibration.ch3.offset) / calibration.ch3.slope)).toFixed(2);
+            container.innerHTML = `
+                <div><strong class="font-semibold">Timestamp:</strong><p>${new Date(timestamp).toLocaleString()}</p></div>
+                <div><strong class="font-semibold">Battery:</strong><p>${battery} V</p></div>
+                <div class="border-t pt-2 mt-2">
+                    <strong class="font-semibold">Latest Concentration:</strong>
+                    <p>Channel 1 (L): ${conc1}</p>
+                    <p>Channel 2 (M): ${conc2}</p>
+                    <p>Channel 3 (N): ${conc3}</p>
+                </div>`;
+        }
+        
+        function updateLatestDataOxygen(oxygenData) {
+            const dataRows = oxygenData.slice(1);
+            if (dataRows.length === 0) return;
+            const lastRow = dataRows[dataRows.length - 1];
+            const timestamp = lastRow[20]; // Column U
+            const battery = lastRow[1];
+            const container = document.getElementById('latest-data-container');
+            const index1 = 14, index2 = 15; // Columns O, P
+            if (lastRow.length <= index2) {
+                 container.innerHTML = `<p class="text-red-500">Error: Not enough columns for oxygen readings.</p>`;
+                 return;
+            }
+            const val1 = (1.5 - parseFloat(lastRow[index1])).toFixed(3);
+            const val2 = (1.5 - parseFloat(lastRow[index2])).toFixed(3);
+            container.innerHTML = `
+                <div><strong class="font-semibold">Timestamp:</strong><p>${new Date(timestamp).toLocaleString()}</p></div>
+                <div><strong class="font-semibold">Battery:</strong><p>${battery} V</p></div>
+                <div class="border-t pt-2 mt-2">
+                    <strong class="font-semibold">Latest Reading (Battery Voltage [V]):</strong>
+                    <p>Channel 1 (O): ${val1}</p>
+                    <p>Channel 2 (P): ${val2}</p>
+                </div>`;
+        }
+
+        function updateChartDefault(vcData) {
+            chartTitle.textContent = 'Voltage vs. Current (Last 5 Readings)';
+            if (mainChart) mainChart.destroy();
+            
+            const datasets = [];
+            const colors = ['#3b82f6', '#ef4444', '#10b981', '#f97316', '#8b5cf6', '#ec4899'];
+            const numberOfReadingsToShow = 5;
+            const columnsPerReading = 2;
+            const totalColumns = vcData[0].length;
+            const startIndex = Math.max(0, totalColumns - (numberOfReadingsToShow * columnsPerReading));
+
+            for (let i = startIndex; i < totalColumns; i += columnsPerReading) {
+                const seriesData = [];
+                for (let j = 3; j < vcData.length; j++) {
+                    const voltage = parseFloat(vcData[j][i]);
+                    const current = parseFloat(vcData[j][i + 1]);
+                    if (!isNaN(voltage) && !isNaN(current)) seriesData.push({ x: voltage, y: current });
+                }
+                const readingNumber = (i / columnsPerReading) + 1;
+                datasets.push({
+                    label: `Reading ${readingNumber}`, data: seriesData, backgroundColor: colors[datasets.length % colors.length]
+                });
+            }
+            
+            mainChart = new Chart(ctx, {
+                type: 'scatter', data: { datasets: datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'linear', position: 'bottom', title: { display: true, text: 'Voltage (mV)' }},
+                        y: { title: { display: true, text: 'Current (uA)' }}
+                    }
+                }
+            });
+        }
+
+        function updateChartNitrate(nitrateData, calibration) {
+            chartTitle.textContent = 'Calibrated Nitrate Concentration (Last 20 Hours)';
+            if (mainChart) mainChart.destroy();
+
+            const dataRows = nitrateData.slice(1);
+            const stableDataRows = dataRows.slice(3);
+            const last20Rows = stableDataRows.slice(-20);
+
+            const labels = [], sensor1Data = [], sensor2Data = [], sensor3Data = [];
+            if (last20Rows.length > 0) {
+                const index1 = 11, index2 = 12, index3 = 13; // L, M, N
+                last20Rows.forEach(row => {
+                    if (row.length > index3) {
+                        const timestampStr = row[20]; // Column U
+                        const raw1 = parseFloat(row[index1]);
+                        const raw2 = parseFloat(row[index2]);
+                        const raw3 = parseFloat(row[index3]);
+                        if (timestampStr) {
+                            labels.push(new Date(timestampStr));
+                            const conc1 = !isNaN(raw1) ? Math.pow(10, (raw1 - calibration.ch1.offset) / calibration.ch1.slope) : null;
+                            const conc2 = !isNaN(raw2) ? Math.pow(10, (raw2 - calibration.ch2.offset) / calibration.ch2.slope) : null;
+                            const conc3 = !isNaN(raw3) ? Math.pow(10, (raw3 - calibration.ch3.offset) / calibration.ch3.slope) : null;
+                            sensor1Data.push(conc1);
+                            sensor2Data.push(conc2);
+                            sensor3Data.push(conc3);
+                        }
+                    }
+                });
+            }
+            
+            mainChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Channel 1 (L)', data: sensor1Data, borderColor: '#3b82f6', fill: false, tension: 0.1 },
+                        { label: 'Channel 2 (M)', data: sensor2Data, borderColor: '#ef4444', fill: false, tension: 0.1 },
+                        { label: 'Channel 3 (N)', data: sensor3Data, borderColor: '#10b981', fill: false, tension: 0.1 }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'hour', tooltipFormat: 'PPpp' }, title: { display: true, text: 'Date and Time' }},
+                        y: { title: { display: true, text: 'Nitrate Concentration' }}
+                    },
+                    plugins: { tooltip: { mode: 'index', intersect: false } },
+                    spanGaps: true
+                }
+            });
+        }
+        
+        function updateChartOxygen(oxygenData) {
+            chartTitle.textContent = 'Oxygen Sensor Readings (Last 48 Hours)';
+            if (mainChart) mainChart.destroy();
+
+            const dataRows = oxygenData.slice(1);
+            const stableDataRows = dataRows.slice(3);
+            const last48Rows = stableDataRows.slice(-48);
+
+            const labels = [], sensor1Data = [], sensor2Data = [];
+
+            if (last48Rows.length > 0) {
+                const index1 = 14, index2 = 15; // Columns O, P
+                last48Rows.forEach(row => {
+                    if (row.length > index2) {
+                        const timestampStr = row[20]; // Column U
+                        const val1 = 1.5 - parseFloat(row[index1]);
+                        const val2 = 1.5 - parseFloat(row[index2]);
+                        if (timestampStr) {
+                            labels.push(new Date(timestampStr));
+                            sensor1Data.push(!isNaN(val1) ? val1 : null);
+                            sensor2Data.push(!isNaN(val2) ? val2 : null);
+                        }
+                    }
+                });
+            }
+            
+            mainChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Channel 1 (O)', data: sensor1Data, borderColor: '#3b82f6', fill: false, tension: 0.1 },
+                        { label: 'Channel 2 (P)', data: sensor2Data, borderColor: '#ef4444', fill: false, tension: 0.1 }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'hour', tooltipFormat: 'PPpp' }, title: { display: true, text: 'Date and Time' }},
+                        y: { title: { display: true, text: 'Voltage Units' }}
+                    },
+                    plugins: { tooltip: { mode: 'index', intersect: false } },
+                    spanGaps: true
+                }
+            });
+        }
+
+        function showDashboard(sensorId) {
+            mapView.style.display = 'none';
+            dashboardView.style.display = 'block';
+            loadAllData(sensorId);
+        }
+
+        function createMarker(sensorId, sensor) {
+            const marker = L.marker(sensor.coords).addTo(map);
+            marker.bindPopup(`<b>${sensor.name}</b><br>Click to view data.`);
+            marker.on('click', () => showDashboard(sensorId));
+        }
+
+        // --- INITIALIZE MARKERS ---
+        for (const sensorId in sensorDataSources) {
+            createMarker(sensorId, sensorDataSources[sensorId]);
+        }
+
+        // --- EVENT LISTENERS ---
+        backToMapButton.addEventListener('click', () => {
+            dashboardView.style.display = 'none';
+            mapView.style.display = 'block';
+            setTimeout(() => map.invalidateSize(), 10);
+        });
+
+        cancelAddSensorButton.addEventListener('click', () => {
+            addSensorForm.reset();
+            nitrateFieldsDiv.classList.add('hidden');
+            oxygenFieldsDiv.classList.add('hidden');
+            defaultUrlsDiv.classList.remove('hidden');
+            addSensorModal.style.display = 'none';
+        });
+
+        sensorTypeSelect.addEventListener('change', (e) => {
+            defaultUrlsDiv.classList.add('hidden');
+            nitrateFieldsDiv.classList.add('hidden');
+            oxygenFieldsDiv.classList.add('hidden');
+            if (e.target.value === 'nitrate') {
+                nitrateFieldsDiv.classList.remove('hidden');
+            } else if (e.target.value === 'oxygen') {
+                oxygenFieldsDiv.classList.remove('hidden');
+            } else {
+                defaultUrlsDiv.classList.remove('hidden');
+            }
+        });
+
+        addSensorForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = document.getElementById('sensor-name').value;
+            const type = document.getElementById('sensor-type').value;
+            const lat = parseFloat(document.getElementById('sensor-lat').value);
+            const lng = parseFloat(document.getElementById('sensor-lng').value);
+            
+            if (isNaN(lat) || isNaN(lng)) {
+                alert("Please enter valid coordinates.");
+                return;
+            }
+
+            const newSensorId = 'sensor' + (Object.keys(sensorDataSources).length + 1);
+            let newSensor;
+
+            if (type === 'nitrate') {
+                newSensor = {
+                    type: 'nitrate', name: name, coords: [lat, lng],
+                    urls: { nitrateData: document.getElementById('sensor-nitrate-url').value },
+                    calibration: {
+                        ch1: {
+                            slope: parseFloat(document.getElementById('nitrate-slope1').value) || 1,
+                            offset: parseFloat(document.getElementById('nitrate-offset1').value) || 0
+                        },
+                        ch2: {
+                            slope: parseFloat(document.getElementById('nitrate-slope2').value) || 1,
+                            offset: parseFloat(document.getElementById('nitrate-offset2').value) || 0
+                        },
+                        ch3: {
+                            slope: parseFloat(document.getElementById('nitrate-slope3').value) || 1,
+                            offset: parseFloat(document.getElementById('nitrate-offset3').value) || 0
+                        }
+                    }
+                };
+            } else if (type === 'oxygen') {
+                newSensor = {
+                    type: 'oxygen', name: name, coords: [lat, lng],
+                    urls: { oxygenData: document.getElementById('sensor-oxygen-url').value }
+                };
+            }
+            else {
+                newSensor = {
+                    type: 'default', name: name, coords: [lat, lng],
+                    urls: {
+                        timestampTemp: document.getElementById('sensor-ts-url').value,
+                        voltageCurrent: document.getElementById('sensor-vc-url').value,
+                        parameters: document.getElementById('sensor-params-url').value
+                    }
+                };
+            }
+
+            sensorDataSources[newSensorId] = newSensor;
+            createMarker(newSensorId, newSensor);
+            
+            addSensorForm.reset();
+            nitrateFieldsDiv.classList.add('hidden');
+            oxygenFieldsDiv.classList.add('hidden');
+            defaultUrlsDiv.classList.remove('hidden');
+            addSensorModal.style.display = 'none';
+            map.panTo(new L.LatLng(lat, lng));
+        });
+
+    </script>
+</body>
+</html>
+
